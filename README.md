@@ -8,13 +8,10 @@ It includes:
 - **Microbenchmarks**: point reads/writes on synthetic traces that preserve real Ethereum access skew.
 - **Ethereum StateDB evaluation**: end-to-end replay of StateDB operation traces extracted from Ethereum blocks.
 
-**Data provenance**: all workloads are processed from the **public Ethereum blockchain**. Generating the raw traces
-from scratch is extremely time- and SSD-space-intensive, so for artifact evaluation we provide **preprocessed**
-trace shards (`block_XXm_ops.zip`) and microbenchmark key-frequency files (`micro-bench-keys.zip`) via AWS S3.
-The extraction code for StateDB operation traces is included in `statedb-ops-extract/`.
+
 
 Repository structure:
-- [`ficusdb/`](ficusdb/): (expected sibling repo) FicusDB implementation
+- [`ficusdb/`](ficusdb/): FicusDB implementation
 - [`geth-statedb/`](geth-statedb/): Geth StateDB baseline
 - [`statedb-ops-extract/`](statedb-ops-extract/): tooling to extract StateDB ops from raw blocks
 - [`scripts/`](scripts/): experiment drivers and plotting scripts
@@ -44,7 +41,11 @@ Dependencies:
 - **Rust**: required to build and run FicusDB binaries used by the benchmark scripts (the scripts expect a sibling repo at `../ficusdb`); tested with **Rust 1.93.0**.
 - **Python**: Python 3.x for trace/workload generation scripts in `scripts/` (e.g., `generate-bench-trace.py`).
 - **System utilities**: `git`, `curl`, `unzip` (for downloading and unpacking traces), plus a C toolchain (`gcc`/`clang`) for building some dependencies.
-- **Docker (optional)**: only required if you build the `statedb-ops-extract/` tooling via its `Dockerfile`.
+
+**Data provenance**: all workloads are processed from the **public Ethereum blockchain**. Generating the raw traces
+from scratch is extremely time- and SSD-space-intensive, so for artifact evaluation we provide **preprocessed**
+trace shards (`block_XXm_ops.zip`) and microbenchmark key-frequency files (`micro-bench-keys.zip`) via AWS S3.
+The extraction code for StateDB operation traces is included in `statedb-ops-extract/`.
 
 ## Microbenchmark
 

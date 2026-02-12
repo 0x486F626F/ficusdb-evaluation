@@ -2,12 +2,25 @@
 
 ## Overview
 
-Folder Structures:
-* ['ficusdb/']('ficusdb/')
-* ['get-statedb/']('geth-statedb/')
-* ['db/']('db/')
-* ['data/']('data/')
-* ['logs/']('logs/')
+This repository contains the scripts and data pipeline used to evaluate **FicusDB** against **Geth StateDB**.
+It includes:
+
+- **Microbenchmarks**: point reads/writes on synthetic traces that preserve real Ethereum access skew.
+- **Ethereum StateDB evaluation**: end-to-end replay of StateDB operation traces extracted from Ethereum blocks.
+
+**Data provenance**: all workloads are processed from the **public Ethereum blockchain**. Generating the raw traces
+from scratch is extremely time- and SSD-space-intensive, so for artifact evaluation we provide **preprocessed**
+trace shards (`block_XXm_ops.zip`) and microbenchmark key-frequency files (`micro-bench-keys.zip`) via AWS S3.
+The extraction code for StateDB operation traces is included in `statedb-ops-extract/`.
+
+Repository structure:
+- [`ficusdb/`](ficusdb/): (expected sibling repo) FicusDB implementation
+- [`geth-statedb/`](geth-statedb/): Geth StateDB baseline
+- [`statedb-ops-extract/`](statedb-ops-extract/): tooling to extract StateDB ops from raw blocks
+- [`scripts/`](scripts/): experiment drivers and plotting scripts
+- [`db/`](db/): populated databases
+- [`data/`](data/): downloaded traces and generated workloads
+- [`logs/`](logs/): experiment logs and outputs
 
 ## System Requirements
 
@@ -19,7 +32,7 @@ Hardware Requirements (minimum / recommended):
 - **CPU**: x86_64, 4+ cores / 6+ cores (NVMe-friendly single-node evaluation).
 - **Memory**: 16 GB / 64 GB.
 - **Storage**: SSD required; **NVMe strongly recommended** for throughput experiments.
-  - **Free disk space**: ~50 GB for microbench + small traces; **hundreds of GB to multiple TB** if reproducing large-scale archival runs and storing many snapshots.
+  - **Free disk space**: **hundreds of GB** for microbenchmarks (often ~1 TB); **multiple TB** for the Ethereum StateDB evaluation (we recommend **~4 TB** free).
 - **Network**: Internet access recommended to download traces/datasets (e.g., via `curl`).
 
 Dependencies:
@@ -36,6 +49,10 @@ Dependencies:
 ## Microbenchmark
 
 The microbenchmark evaluates point reads/writes on synthetic workloads derived from real Ethereum access skew.
+It compares **FicusDB** against two baselines:
+
+- **Geth-TrieDB**
+- **ChainKV**
 
 ### 1) Download key-frequency data, populate databases, and generate workload traces
 
@@ -67,7 +84,7 @@ Finally, it generates two workload traces (50,000,000 operations each) by sampli
 - **`data/micro/micro-20m-50m.ops`**
 - **`data/micro/micro-100m-50m.ops`**
 
-**Expected runtime / space**: a few hours end-to-end and roughly **~500 GB** of free disk space (especially for the 100M-key dataset).
+**Expected runtime / space**: a few hours end-to-end and **hundreds of GB** of free disk space (often **~0.5--1 TB**, especially for the 100M-key dataset and backups).
 
 ### 2) Run the microbenchmarks
 
@@ -90,6 +107,8 @@ Run:
 cd scripts
 python3 micro-plot.py
 ```
+
+This generates `scripts/micro-plot.png` from the logs in `logs/statedb/`.
 
 ## Ethereum StateDB Evaluation
 
@@ -147,3 +166,5 @@ Run:
 cd scripts
 python3 statedb-plot.py
 ```
+
+This generates `scripts/statedb-plot.png` from the logs in `logs/statedb/`.

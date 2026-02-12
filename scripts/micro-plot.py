@@ -40,6 +40,13 @@ def load_geth_log(log_file):
             entry = []
     return data
 
+def load_chainkv_log(log_file):
+    data = {"trpt": []}
+    for line in open(log_file):
+        trpt = float(line.split()[3])
+        data["trpt"].append(trpt)
+    return data
+
 def get_ficus_log(key_size, ops, item, val_size=200, batch_size=2000):
     data = []
     for cache_size in [1024, 2048, 4096, 8192, 16384]:
@@ -62,6 +69,17 @@ def get_geth_log(key_size, ops, item, val_size=200, batch_size=2000):
             data.append(np.array(load_geth_log(log_file)[item]))
     return data
 
+def get_chainkv_log(key_size, ops, item, val_size=200, batch_size=2000):
+    data = []
+    for cache_size in [1024, 2048, 4096, 8192, 16384]:
+        if ops == 'put':
+            log_file = f"../logs/put/micro-put-chainkv-{key_size}-50m-{cache_size}-{val_size}-{batch_size}.log"
+            data.append(np.array(load_chainkv_log(log_file)[item]))
+        else:
+            log_file = f"../logs/{ops}/micro-{ops}-chainkv-{key_size}-50m-{cache_size}.log"
+            data.append(np.array(load_chainkv_log(log_file)[item]))
+    return data
+
 def plot_get(axs, key_size, ylim, title):
     warmup = 0.8
     ficus_get = get_ficus_log(key_size, 'get', 'trpt')
@@ -72,6 +90,10 @@ def plot_get(axs, key_size, ylim, title):
     get_vget = np.array([np.mean(t[int(len(t)*warmup):]) for t in get_vget])
     get_get = get_geth_log(key_size, 'get', 'trpt')
     get_get = np.array([np.mean(t[int(len(t)*warmup):]) for t in get_get])
+    chainkv_vget = get_chainkv_log(key_size, 'vget', 'trpt')
+    chainkv_vget = np.array([np.mean(t[int(len(t)*warmup):]) for t in chainkv_vget])
+    chainkv_get = get_chainkv_log(key_size, 'get', 'trpt')
+    chainkv_get = np.array([np.mean(t[int(len(t)*warmup):]) for t in chainkv_get])
 
     memsize = ['1G', '2G', '4G', '8G', '16G']
     n_groups = len(memsize)
@@ -87,6 +109,10 @@ def plot_get(axs, key_size, ylim, title):
     label = 'geth-vget', color=color[1])
     bar3 = axs.bar(index+bar_width*3+offset, get_get/1000, bar_width, 
     label = 'geth-get', color=color[1], hatch='//', edgecolor='black')
+    bar4 = axs.bar(index+bar_width*4+offset, chainkv_vget/1000, bar_width, 
+    label = 'chainkv-vget', color=color[2])
+    bar5 = axs.bar(index+bar_width*5+offset, chainkv_get/1000, bar_width, 
+    label = 'chainkv-get', color=color[2], hatch='//', edgecolor='black')
 
     axs.set_ylim([0, ylim])
     axs.set_xlabel('cache size')
@@ -103,7 +129,9 @@ def plot_put(axs, key_size, ylim, title):
     geth_trpt = get_geth_log(key_size, 'put', 'trpt')
     geth_trpt = np.array([np.mean(t[int(len(t)*warmup):]) for t in geth_trpt])
     
-
+    chainkv_trpt = get_chainkv_log(key_size, 'put', 'trpt')
+    chainkv_trpt = np.array([np.mean(t[int(len(t)*warmup):]) for t in chainkv_trpt])
+    
     memsize = ['1G', '2G', '4G', '8G', '16G']
     n_groups = len(memsize)
     index = np.arange(n_groups)
@@ -113,6 +141,7 @@ def plot_put(axs, key_size, ylim, title):
     
     bar0 = axs.bar(index+bar_width*0+offset, ficus_trpt/1000, bar_width, label = 'ficus', color=color[0])
     bar1 = axs.bar(index+bar_width*1+offset, geth_trpt/1000, bar_width, label = 'geth', color=color[1])
+    bar2 = axs.bar(index+bar_width*2+offset, chainkv_trpt/1000, bar_width, label = 'chainkv', color=color[2])
 
     axs.set_ylim([0, ylim])
     axs.set_xlabel('cache size')
@@ -158,11 +187,21 @@ def plot_miss(axs, title):
     geth_20m = np.array([1-np.mean(t[int(len(t)*warmup):]) for t in geth_20m])
     geth_100m = get_geth_log('100m', 'get', 'ratio')
     geth_100m = np.array([1-np.mean(t[int(len(t)*warmup):]) for t in geth_100m])
+    lru_20m = []
+    for cache in [1024, 2048, 4096, 8192, 16384]:
+        file_name = f"../logs/lru/micro-lru-ficus-20m-50m-{cache}.log"
+        lru_20m.append(1-np.mean(np.array(load_ficus_log(file_name)['ratio'])[int(len(load_ficus_log(file_name)['ratio'])*warmup):]))
+    lru_100m = []
+    for cache in [1024, 2048, 4096, 8192, 16384]:
+        file_name = f"../logs/lru/micro-lru-ficus-100m-50m-{cache}.log"
+        lru_100m.append(1-np.mean(np.array(load_ficus_log(file_name)['ratio'])[int(len(load_ficus_log(file_name)['ratio'])*warmup):]))
 
     axs.plot(ficus_20m, marker='v', label = 'ficus-20m', color=color[0])
     axs.plot(ficus_100m, marker='o', label = 'ficus-100m', color=color[0], linestyle='--')
     axs.plot(geth_20m, marker='v', label = 'geth-20m', color=color[1])
     axs.plot(geth_100m, marker='o', label = 'geth-100m', color=color[1], linestyle='--')
+    axs.plot(lru_20m, marker='v', label = 'ficus-lru-20m', color=color[3])
+    axs.plot(lru_100m, marker='o', label = 'ficus-lru-100m', color=color[3], linestyle='--')
     axs.set_ylim([0, 0.33])
     axs.set_xlabel('cache size')
     axs.set_ylabel('miss ratio')
@@ -177,11 +216,11 @@ def plot_micro(filename):
     getax1 = fig.add_subplot(gx[0, 0:3])
     getax2 = fig.add_subplot(gx[0, 3:6])
     plot_get(getax1, '20m', 350, '(a) Get Ops Throughput: 20M keys')
-    #plot_get(getax2, '100m', 250, '(b) Get Ops Throughput: 100M keys')
+    plot_get(getax2, '100m', 250, '(b) Get Ops Throughput: 100M keys')
     putax1 = fig.add_subplot(gx[1, 0:2])
     putax2 = fig.add_subplot(gx[1, 2:4])
-    #plot_put(putax1, '20m', 42, '(c) Put Ops Throughput: 20M keys') 
-    #plot_put(putax2, '100m', 42, '(d) Put Ops Throughput: 100M keys')
+    plot_put(putax1, '20m', 42, '(c) Put Ops Throughput: 20M keys') 
+    plot_put(putax2, '100m', 42, '(d) Put Ops Throughput: 100M keys')
     batchax = fig.add_subplot(gx[1, 4:6])
     plot_batch(batchax, '(e) Batch Write Throughput', color)
     missax = fig.add_subplot(gx[2, 0:3])
@@ -191,4 +230,4 @@ def plot_micro(filename):
     fig.savefig(filename, dpi=500)
     fig.clf()
 
-plot_micro('micro-bench.png')
+plot_micro('micro-plot.png')

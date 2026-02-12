@@ -45,9 +45,9 @@ def load_geth_log(log_file):
     return data
 
 ficus_4 = load_ficus_log('../logs/statedb/ficus-statedb-4096.log')
-# ficus_32 = load_ficus_log('../logs/statedb/ficus-statedb-32768.log')
+ficus_32 = load_ficus_log('../logs/statedb/ficus-statedb-32768.log')
 geth_4 = load_geth_log('../logs/statedb/geth-statedb-4096.log')
-# geth_32 = load_ficus_log('../logs/statedb/geth-statedb-32768.log')
+geth_32 = load_geth_log('../logs/statedb/geth-statedb-32768.log')
 
 def window_ave(a, w=10):
     r = []
@@ -58,16 +58,17 @@ def window_ave(a, w=10):
 
 def plot_block_time(axs, title):
     ficus_4_time = np.array(window_ave(ficus_4["time"], w=100))
-    # ficus_32_time = np.array(load_ficus_log('../logs/statedb/ficus-statedb-32768.log')["time"])
-    geth_4_time = np.array(window_ave(geth_4["time"], w=10))/10
-    # geth_32_time = np.array(load_ficus_log('../logs/statedb/geth-statedb-32768.log')["time"])
+    ficus_32_time = np.array(window_ave(ficus_32["time"], w=100))
+    geth_4_time = np.array(window_ave(geth_4["time"], w=100))
+    geth_32_time = np.array(window_ave(geth_32["time"], w=100))
     n = len(ficus_4_time)
     x = [10000000+i*(2000000/n) for i in range(n)]
 
     start = int(n*0.25)
     p0,=axs.plot(x[start:], ficus_4_time[start:], color=color[0], label='ficus-4g', linestyle='solid')
+    p1,=axs.plot(x[start:], ficus_32_time[start:], color=color[0], label='ficus-32g', linestyle='dashed')
     p2,=axs.plot(x[start:], geth_4_time[start:], color=color[1], label='geth-4g', linestyle='solid')
-
+    p3,=axs.plot(x[start:], geth_32_time[start:], color=color[1], label='geth-32g', linestyle='dashed')
     axs.set_title(title)
     axs.set_ylabel('time (ms)')
     axs.set_xlabel('block number')
@@ -75,20 +76,24 @@ def plot_block_time(axs, title):
 
 def plot_trpt(axs, title):
     ficus_4_trpt = np.array(window_ave(ficus_4["trpt"], w=100))/1000
-    geth_4_trpt = np.array(window_ave(geth_4["trpt"], w=10))/1000
+    ficus_32_trpt = np.array(window_ave(ficus_32["trpt"], w=100))/1000
+    geth_4_trpt = np.array(window_ave(geth_4["trpt"], w=100))/1000
+    geth_32_trpt = np.array(window_ave(geth_32["trpt"], w=100))/1000
     n = len(ficus_4_trpt)
     x = [10000000+i*(2000000/n) for i in range(n)]
     start = int(n*0.25)
     p0,=axs.plot(x[start:], ficus_4_trpt[start:], color=color[0], label='ficus-4g', linestyle='solid')
+    p1,=axs.plot(x[start:], ficus_32_trpt[start:], color=color[0], label='ficus-32g', linestyle='dashed')
     p2,=axs.plot(x[start:], geth_4_trpt[start:], color=color[1], label='geth-4g', linestyle='solid')
+    p3,=axs.plot(x[start:], geth_32_trpt[start:], color=color[1], label='geth-32g', linestyle='dashed')
     axs.set_title(title)
     axs.set_ylabel('throughput (kops/s)')
     axs.set_xlabel('block number')
     axs.legend(ncol=2)
 
 def plot_ops(axs, title):
-    get_ops = np.array(window_ave(ficus_4["opget"], w=10))/1000
-    put_ops = np.array(window_ave(ficus_4["opput"], w=10))/1000
+    get_ops = np.array(window_ave(ficus_4["opget"], w=100))/1000
+    put_ops = np.array(window_ave(ficus_4["opput"], w=100))/1000
     n = len(get_ops)
     x = [10000000+i*(2000000/n) for i in range(n)]
     start = int(n*0.25)
@@ -101,7 +106,7 @@ def plot_ops(axs, title):
 
 def plot_miss_ratio(axs, title):
     ficus_4_miss_ratio = 1-np.array(window_ave(ficus_4["ratio"], w=100))
-    geth_4_miss_ratio = 1-np.array(window_ave(geth_4["ratio"], w=10))
+    geth_4_miss_ratio = 1-np.array(window_ave(geth_4["ratio"], w=100))
     n = len(ficus_4_miss_ratio)
     x = [10000000+i*(2000000/n) for i in range(n)]
     start = int(n*0.25)
@@ -115,12 +120,10 @@ def plot_miss_ratio(axs, title):
 def eval_statedb(filename, w=1):
     fig, axs = plt.subplots(2, 3, figsize=(10.5, 6))
 
-    #plot_cdf('a', axs[0][0])
     plot_block_time(axs[0][1], '(b) StateDB Runtime Per Block')
     plot_trpt(axs[0][2], '(c) StateDB Ops Throughput')
     plot_ops(axs[1][0], '(d) StateDB Ops Counter Per Block')
     plot_miss_ratio(axs[1][1], '(e) Cache Miss Ratio')
-    # plot_breakdown('f', axs[1][2])
 
     fig.tight_layout()
     fig.savefig(filename, dpi=500)

@@ -1,0 +1,19 @@
+[package]
+name = "ficusdb"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sha3 = "0.10.8"
+rlp = "0.6.1"
+lru-mem = "0.3.0"
+lru = "0.16.3"
+hex = "0.4.3"
+typed-builder = "0.23.2"
+num-bigint = "0.4.6"
+rand = "0.10.0"
+rand_distr = "0.6.0"
+
+[features]
+stats = []
+lru=[]

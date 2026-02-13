@@ -1,6 +1,8 @@
 package ethdb
 
 import (
+	"container/list"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +21,16 @@ import (
 type LDBDatabase struct {
 	fn string      // filename for reporting
 	db *leveldb.DB // LevelDB instance
+
+	// cleanCache is a small read-through LRU to avoid repeated LevelDB lookups.
+	cleanCacheLock     sync.Mutex
+	cleanCacheItems    map[string]*list.Element
+	cleanCacheList     *list.List
+	cleanCacheSize     int
+	cleanCacheMaxBytes int
+
+	hitCount  int
+	missCount int
 
 	getTimer       gometrics.Timer // Timer for measuring the database get request counts and latencies
 	putTimer       gometrics.Timer // Timer for measuring the database put request counts and latencies
@@ -49,7 +61,7 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	// Open the db and recover any potential corruptions
 	db, err := leveldb.OpenFile(file, &opt.Options{
 		OpenFilesCacheCapacity: handles,
-		BlockCacheCapacity:     cache / 2 * opt.MiB,
+		BlockCacheCapacity:     cache / 4 * opt.MiB,
 		WriteBuffer:            cache / 4 * opt.MiB, // Two of these are used internally
 		Filter:                 filter.NewBloomFilter(10),
 		Compression:            opt.NoCompression,
@@ -63,10 +75,17 @@ func NewLDBDatabase(file string, cache int, handles int) (*LDBDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
+	cleanCacheMaxBytes := cache * opt.MiB
+	if cleanCacheMaxBytes < opt.MiB {
+		cleanCacheMaxBytes = opt.MiB
+	}
 	return &LDBDatabase{
-		fn:  file, // 文件名
-		db:  db,   // 数据库对象
-		log: log.New("database", file),
+		fn:                 file, // 文件名
+		db:                 db,   // 数据库对象
+		cleanCacheItems:    make(map[string]*list.Element),
+		cleanCacheList:     list.New(),
+		cleanCacheMaxBytes: cleanCacheMaxBytes,
+		log:                log.New("database", file),
 	}, nil
 }
 func NewLDBDatabase2(file string, cache int, handles int) (*LDBDatabase, error) {
@@ -96,10 +115,18 @@ func NewLDBDatabase2(file string, cache int, handles int) (*LDBDatabase, error) 
 	if err != nil {
 		return nil, err
 	}
+	cleanCacheMaxBytes := cache / 4 * opt.MiB
+	if cleanCacheMaxBytes < opt.MiB {
+		cleanCacheMaxBytes = opt.MiB
+	}
+	fmt.Println("cleanCacheMaxBytes", cleanCacheMaxBytes)
 	return &LDBDatabase{
-		fn:  file, // 文件名
-		db:  db,   // 数据库对象
-		log: log.New("database", file),
+		fn:                 file, // 文件名
+		db:                 db,   // 数据库对象
+		cleanCacheItems:    make(map[string]*list.Element),
+		cleanCacheList:     list.New(),
+		cleanCacheMaxBytes: cleanCacheMaxBytes,
+		log:                log.New("database", file),
 	}, nil
 }
 
@@ -131,7 +158,11 @@ func (db *LDBDatabase) Put(key []byte, value []byte) error {
 	I++
 	Size += len(key) + len(value)
 	//fmt.Println("From DB",key)
-	return db.db.Put(key, value, nil)
+	if err := db.db.Put(key, value, nil); err != nil {
+		return err
+	}
+	db.cleanCacheSet(key, value)
+	return nil
 }
 func (db *LDBDatabase) Put_s(key []byte, value []byte) error {
 	// Measure the database put latency, if requested
@@ -147,7 +178,11 @@ func (db *LDBDatabase) Put_s(key []byte, value []byte) error {
 	//fmt.Println(i)
 	I++
 	Size += len(key) + len(value)
-	return db.db.Put_s(key, value, nil)
+	if err := db.db.Put_s(key, value, nil); err != nil {
+		return err
+	}
+	db.cleanCacheSet(key, value)
+	return nil
 }
 
 func (db *LDBDatabase) Has(key []byte) (bool, error) {
@@ -167,6 +202,11 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	if db.getTimer != nil {
 		defer db.getTimer.UpdateSince(time.Now())
 	}
+	if dat := db.cleanCacheGet(key); dat != nil {
+		db.hitCount++
+		return dat, nil
+	}
+	db.missCount++
 	// Retrieve the key and increment the miss counter if not found
 	Ti = time.Now()
 	dat, err := db.db.Get(key, nil)
@@ -183,6 +223,7 @@ func (db *LDBDatabase) Get(key []byte) ([]byte, error) {
 	if db.readMeter != nil {
 		db.readMeter.Mark(int64(len(dat)))
 	}
+	db.cleanCacheSet(key, dat)
 	return dat, nil
 	//return rle.Decompress(dat)
 }
@@ -218,7 +259,11 @@ func (db *LDBDatabase) Delete(key []byte) error {
 		defer db.delTimer.UpdateSince(time.Now())
 	}
 	// Execute the actual operation
-	return db.db.Delete(key, nil)
+	if err := db.db.Delete(key, nil); err != nil {
+		return err
+	}
+	db.cleanCacheDelete(key)
+	return nil
 }
 
 func (db *LDBDatabase) NewIterator() iterator.Iterator {
@@ -330,32 +375,65 @@ func (db *LDBDatabase) meter(refresh time.Duration) {
 }
 
 func (db *LDBDatabase) NewBatch() Batch {
-	return &ldbBatch{db: db.db, b: new(leveldb.Batch)}
+	return &ldbBatch{db: db.db, ldb: db, b: new(leveldb.Batch)}
 }
 
 type ldbBatch struct {
 	db   *leveldb.DB
+	ldb  *LDBDatabase
 	b    *leveldb.Batch
 	size int
+
+	pending map[string][]byte
 }
 
 func (b *ldbBatch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(value)
+	if b.ldb != nil {
+		if b.pending == nil {
+			b.pending = make(map[string][]byte)
+		}
+		b.pending[string(key)] = append([]byte(nil), value...)
+	}
 	return nil
 }
 
 func (b *ldbBatch) Put_s(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(value)
+	if b.ldb != nil {
+		if b.pending == nil {
+			b.pending = make(map[string][]byte)
+		}
+		b.pending[string(key)] = append([]byte(nil), value...)
+	}
 	return nil
 }
 
 func (b *ldbBatch) Write() error {
-	return b.db.Write(b.b, nil)
+	if err := b.db.Write(b.b, nil); err != nil {
+		return err
+	}
+	if b.ldb != nil {
+		for key, value := range b.pending {
+			b.ldb.cleanCacheSetString(key, value)
+		}
+	}
+	b.pending = nil
+	return nil
 }
 func (b *ldbBatch) Write_s() error {
-	return b.db.Write(b.b, nil)
+	if err := b.db.Write(b.b, nil); err != nil {
+		return err
+	}
+	if b.ldb != nil {
+		for key, value := range b.pending {
+			b.ldb.cleanCacheSetString(key, value)
+		}
+	}
+	b.pending = nil
+	return nil
 }
 func (b *ldbBatch) ValueSize() int {
 	return b.size
@@ -432,4 +510,99 @@ func (tb *tableBatch) Write() error {
 
 func (tb *tableBatch) ValueSize() int {
 	return tb.batch.ValueSize()
+}
+
+type cleanCacheEntry struct {
+	key   string
+	value []byte
+	size  int
+}
+
+func (db *LDBDatabase) cleanCacheGet(key []byte) []byte {
+	if db.cleanCacheMaxBytes <= 0 {
+		return nil
+	}
+	cacheKey := string(key)
+
+	db.cleanCacheLock.Lock()
+	defer db.cleanCacheLock.Unlock()
+
+	element := db.cleanCacheItems[cacheKey]
+	if element == nil {
+		return nil
+	}
+	db.cleanCacheList.MoveToFront(element)
+	entry := element.Value.(*cleanCacheEntry)
+	return append([]byte(nil), entry.value...)
+}
+
+func (db *LDBDatabase) cleanCacheSet(key []byte, value []byte) {
+	if db.cleanCacheMaxBytes <= 0 {
+		return
+	}
+	db.cleanCacheSetString(string(key), value)
+}
+
+func (db *LDBDatabase) cleanCacheSetString(cacheKey string, value []byte) {
+	if db.cleanCacheMaxBytes <= 0 {
+		return
+	}
+	valueCopy := append([]byte(nil), value...)
+	entrySize := len(cacheKey) + len(valueCopy)
+
+	db.cleanCacheLock.Lock()
+	defer db.cleanCacheLock.Unlock()
+
+	if element := db.cleanCacheItems[cacheKey]; element != nil {
+		entry := element.Value.(*cleanCacheEntry)
+		db.cleanCacheSize += entrySize - entry.size
+		entry.value = valueCopy
+		entry.size = entrySize
+		db.cleanCacheList.MoveToFront(element)
+	} else {
+		entry := &cleanCacheEntry{
+			key:   cacheKey,
+			value: valueCopy,
+			size:  entrySize,
+		}
+		element := db.cleanCacheList.PushFront(entry)
+		db.cleanCacheItems[cacheKey] = element
+		db.cleanCacheSize += entrySize
+	}
+	for db.cleanCacheSize > db.cleanCacheMaxBytes {
+		tail := db.cleanCacheList.Back()
+		if tail == nil {
+			break
+		}
+		entry := tail.Value.(*cleanCacheEntry)
+		delete(db.cleanCacheItems, entry.key)
+		db.cleanCacheList.Remove(tail)
+		db.cleanCacheSize -= entry.size
+	}
+}
+
+func (db *LDBDatabase) cleanCacheDelete(key []byte) {
+	if db.cleanCacheMaxBytes <= 0 {
+		return
+	}
+	cacheKey := string(key)
+
+	db.cleanCacheLock.Lock()
+	defer db.cleanCacheLock.Unlock()
+
+	element := db.cleanCacheItems[cacheKey]
+	if element == nil {
+		return
+	}
+	entry := element.Value.(*cleanCacheEntry)
+	delete(db.cleanCacheItems, cacheKey)
+	db.cleanCacheList.Remove(element)
+	db.cleanCacheSize -= entry.size
+}
+
+func (db *LDBDatabase) PrintStats() {
+	ratio := float64(db.hitCount) / float64(db.hitCount+db.missCount)
+	fmt.Println("hitCount", db.hitCount, "missCount", db.missCount, "ratio", ratio)
+	db.hitCount = 0
+	db.missCount = 0
 }

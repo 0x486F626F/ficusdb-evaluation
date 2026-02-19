@@ -3,9 +3,8 @@ geth=$geth_path/go-ethereum
 datapath=../data/statedb-ops
 dbpath=../db/geth-statedb
 logpath=../logs/statedb
-mkdir -p $datapath
+mkdir -p $dbpath
 mkdir -p $logpath
-rm $datapath/*
 
 cd $geth_path
 go build

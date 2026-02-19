@@ -3,7 +3,6 @@ dbpath=../db/ficus-statedb
 ficusdb_path=../ficusdb/
 ficusdb=$ficusdb_path/target/release/examples/statedb
 logpath=../logs/statedb
-mkdir -p $datapath
 mkdir -p $dbpath
 mkdir -p $logpath
 

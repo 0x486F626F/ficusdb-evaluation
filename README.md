@@ -66,10 +66,10 @@ separate **arbora** repositories, which must be checked out **next to** `ficusdb
 <parent>/
 ├── ficusdb-evaluation/        # this repository
 └── arbora/                    # PrunusDB (only needed to run PrunusDB)
-    ├── prunus/                #   github.com/arbora-systems/prunus          branch del-log
+    ├── prunus/                #   github.com/arbora-systems/prunus          branch main
     ├── backend-common/        #   github.com/arbora-systems/backend-common  branch main
-    ├── bamboo/                #   github.com/arbora-systems/bamboo          branch del-log
-    └── eth-statedb/           #   github.com/arbora-systems/eth-statedb     branch bytes-encoding
+    ├── bamboo/                #   github.com/arbora-systems/bamboo          branch main
+    └── eth-statedb/           #   github.com/arbora-systems/eth-statedb     branch main
 ```
 
 The scripts build PrunusDB from `../arbora/prunus/prunusdb` (relative to this repository);

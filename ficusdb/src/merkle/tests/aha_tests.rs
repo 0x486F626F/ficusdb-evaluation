@@ -194,7 +194,7 @@ fn store_load_children_hash_uses_aha_single_read() {
         expected_child_hash_items.push(h.clone());
         b.children[i] = Some(Child::Hash(cptr, h));
     }
-    let mut node = Node(NodeType::Branch(b));
+    let mut node = Node(NodeType::Branch(Box::new(b)));
 
     // Compute the branch hash item and store the AHA blob.
     node.calc_hash().unwrap();
@@ -255,7 +255,7 @@ fn store_write_aha_does_not_recycle_on_first_write() {
             rlp_child_ref(i as u8),
         ));
     }
-    let mut node = Node(NodeType::Branch(b));
+    let mut node = Node(NodeType::Branch(Box::new(b)));
     node.calc_hash().unwrap();
 
     store.write_aha(&mut node);

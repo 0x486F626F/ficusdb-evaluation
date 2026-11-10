@@ -167,14 +167,15 @@ impl WriteBatch {
                 }
             } else {
                 for (key, value) in self.staging.drain() {
-                    merkle.insert(&key, Value::new(value.clone(), Vec::new()));
+                    merkle.insert(&key, Value::new(value, Vec::new()));
                 }
             }
             merkle.commit()
         };
 
         // Ensure node bytes are durable before publishing the new root pointer.
-        self.node_store.lock().unwrap().flush();
+        // (AHA pages are flushed every few commits; see NodeStore::flush_commit.)
+        self.node_store.lock().unwrap().flush_commit();
 
         let mut root_file = self.root_file.lock().unwrap();
         let tail = root_file.tail() as u64;

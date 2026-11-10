@@ -247,7 +247,7 @@ impl Merkle {
                                 assert!(bidx_path == NBRANCH);
                                 Child::Ptr(NodePtr::Dirty(val_dptr))
                             });
-                            let branch = Node(NodeType::Branch(bnode));
+                            let branch = Node(NodeType::Branch(Box::new(bnode)));
                             // the short node has a shared prefix with the remaining
                             // path, create a short node before the branch node
                             if shared_len > 0 {

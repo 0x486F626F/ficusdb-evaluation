@@ -51,7 +51,8 @@ pub struct Short {
 
 #[derive(Clone)]
 pub enum NodeType {
-    Branch(Branch),
+    // Boxed so Short/Value nodes (and dirty-arena / cache slots) are not branch-sized.
+    Branch(Box<Branch>),
     Short(Short),
     Value(Value),
 }
@@ -75,17 +76,28 @@ impl Node {
     /// - Branch/Short: stored reference item (raw RLP if <32, else RLP(hash))
     pub fn hash(&self) -> Vec<u8> {
         match &self.0 {
-            NodeType::Value(v) => rlp::encode(&v.value).to_vec(),
+            NodeType::Value(v) => super::codec::rlp_bytes(&v.value),
             NodeType::Branch(b) => b.hash.clone(),
             NodeType::Short(s) => s.hash.clone(),
         }
     }
 
+    /// Storage encoding: byte-identical to `encode_rlp` (see codec.rs), but hand-written.
     pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        super::codec::encode_into(&self.0, &mut out);
+        out
+    }
+
+    /// The original `rlp`-crate storage encoding (reference for tests).
+    pub fn encode_rlp(&self) -> Vec<u8> {
         rlp::encode(&self.0).to_vec()
     }
 
     pub fn decode(data: &[u8]) -> Result<Self, Error> {
+        if let Some(inner) = super::codec::decode(data) {
+            return Ok(Self(inner));
+        }
         if let Ok(inner) = rlp::decode::<NodeType>(data) {
             Ok(Self(inner))
         } else {
@@ -98,14 +110,14 @@ impl Node {
         match &self.0 {
             NodeType::Branch(b) => b.rlp_encode(),
             NodeType::Short(s) => s.rlp_encode(),
-            NodeType::Value(v) => Ok(rlp::encode(&v.value).to_vec()),
+            NodeType::Value(v) => Ok(super::codec::rlp_bytes(&v.value)),
         }
     }
 
     /// Calculates and stores the trie reference item for this node.
     pub fn calc_hash(&mut self) -> Result<Vec<u8>, Error> {
         match &mut self.0 {
-            NodeType::Value(v) => Ok(rlp::encode(&v.value).to_vec()),
+            NodeType::Value(v) => Ok(super::codec::rlp_bytes(&v.value)),
             NodeType::Branch(b) => b.calc_hash(),
             NodeType::Short(s) => s.calc_hash(),
         }
@@ -129,16 +141,9 @@ impl Branch {
     }
 
     pub fn rlp_encode(&self) -> Result<Vec<u8>, Error> {
-        let mut encoder = rlp::RlpStream::new_list(NBRANCH + 1);
-        for i in 0..NBRANCH + 1 {
-            match &self.children[i] {
-                None => encoder.append_empty_data(),
-                // `h` is already the RLP encoding of the child reference item.
-                Some(Child::Hash(_, h)) => encoder.append_raw(h, 1),
-                _ => return Err(Error::new(ErrorKind::Other, "Child hash is not loaded")),
-            };
-        }
-        Ok(encoder.out().to_vec())
+        // hand-written, byte-identical to the RlpStream encoding (see codec.rs)
+        super::codec::branch_rlp(&self.children)
+            .ok_or_else(|| Error::new(ErrorKind::Other, "Child hash is not loaded"))
     }
 
     pub fn calc_hash(&mut self) -> Result<Vec<u8>, Error> {
@@ -147,7 +152,7 @@ impl Branch {
             raw
         } else {
             let hash = Keccak256::digest(&raw);
-            rlp::encode(&hash.as_slice()).to_vec()
+            super::codec::rlp_bytes(hash.as_slice())
         };
         self.hash = out.clone();
         Ok(out)
@@ -174,16 +179,11 @@ impl Short {
 
     pub fn rlp_encode(&self) -> Result<Vec<u8>, Error> {
         let compact = utils::to_compact(&self.path);
-        let mut s = rlp::RlpStream::new_list(2);
         match &self.child {
-            Child::Hash(_, h) => {
-                s.append(&compact);
-                // `h` is already the RLP encoding of the child reference item.
-                s.append_raw(h, 1);
-            }
-            _ => return Err(Error::new(ErrorKind::Other, "Child hash is not loaded")),
+            // hand-written, byte-identical to the RlpStream encoding (see codec.rs)
+            Child::Hash(_, h) => Ok(super::codec::short_rlp(&compact, h)),
+            _ => Err(Error::new(ErrorKind::Other, "Child hash is not loaded")),
         }
-        Ok(s.out().to_vec())
     }
 
     pub fn calc_hash(&mut self) -> Result<Vec<u8>, Error> {
@@ -192,7 +192,7 @@ impl Short {
             raw
         } else {
             let hash = Keccak256::digest(&raw);
-            rlp::encode(&hash.as_slice()).to_vec()
+            super::codec::rlp_bytes(hash.as_slice())
         };
         self.hash = out.clone();
         Ok(out)
@@ -236,7 +236,7 @@ impl HeapSize for Child {
 impl HeapSize for Node {
     fn heap_size(&self) -> usize {
         match &self.0 {
-            NodeType::Branch(b) => b.heap_size(),
+            NodeType::Branch(b) => size_of::<Branch>() + b.heap_size(), // the box
             NodeType::Short(s) => s.heap_size(),
             NodeType::Value(v) => v.heap_size(),
         }
@@ -327,7 +327,7 @@ impl Decodable for Child {
 impl Encodable for NodeType {
     fn rlp_append(&self, s: &mut RlpStream) {
         match self {
-            NodeType::Branch(branch) => s.begin_list(2).append(&BRANCH_NODE_TYPE).append(branch),
+            NodeType::Branch(branch) => s.begin_list(2).append(&BRANCH_NODE_TYPE).append(branch.as_ref()),
             NodeType::Short(short) => s.begin_list(2).append(&SHORT_NODE_TYPE).append(short),
             NodeType::Value(value) => s.begin_list(2).append(&VALUE_NODE_TYPE).append(value),
         };
@@ -338,7 +338,7 @@ impl Decodable for NodeType {
     fn decode(s: &Rlp) -> Result<Self, DecoderError> {
         let node_type: u8 = s.val_at(0)?;
         Ok(match node_type {
-            BRANCH_NODE_TYPE => NodeType::Branch(s.val_at(1)?),
+            BRANCH_NODE_TYPE => NodeType::Branch(Box::new(s.val_at(1)?)),
             SHORT_NODE_TYPE => NodeType::Short(s.val_at(1)?),
             VALUE_NODE_TYPE => NodeType::Value(s.val_at(1)?),
             _ => unreachable!(),

@@ -14,8 +14,16 @@ prunusdb=$prunusdb_dir/target/release/examples/micro-bench
 cache_size=${1:-16384}   # MB
 batch_size=${2:-2000}
 val_size=${3:-200}       # bytes
-# Systems to populate (space-separated), e.g. SYSTEMS=prunus ./micro-bench-init.sh
-systems=${SYSTEMS:-"ficus geth chainkv prunus"}
+# Systems (space-separated), e.g. SYSTEMS="ficus geth chainkv" or SYSTEMS=prunus.
+# Default: FicusDB, Geth and ChainKV, plus PrunusDB when the arbora checkout next to
+# ficusdb-evaluation (i.e. $prunusdb_dir) exists.
+if [ -n "${SYSTEMS+x}" ]; then
+    systems=$SYSTEMS
+elif [ -d "$prunusdb_dir" ]; then
+    systems="ficus geth chainkv prunus"
+else
+    systems="ficus geth chainkv"
+fi
 # Dataset sizes to run (space-separated), e.g. KEY_SIZES=20m
 key_sizes=${KEY_SIZES:-"20m 100m"}
 
@@ -26,6 +34,13 @@ has_key_size() {
 has_system() {
     [[ " $systems " == *" $1 "* ]]
 }
+
+if has_system prunus && [ ! -d "$prunusdb_dir" ]; then
+    echo "error: SYSTEMS includes prunus, but $prunusdb_dir does not exist." >&2
+    echo "Check out arbora next to ficusdb-evaluation (see README) or set PRUNUSDB_DIR." >&2
+    exit 1
+fi
+echo "systems: $systems"
 
 ensure_keys() {
     mkdir -p $data_dir/

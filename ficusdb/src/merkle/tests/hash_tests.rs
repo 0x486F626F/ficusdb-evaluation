@@ -245,3 +245,79 @@ fn merkle_hash_delete_to_empty_matches_reference_empty() {
     assert_eq!(merkle.hash(), mpt.root_hash());
     assert_eq!(merkle.hash(), MPT::new().root_hash());
 }
+// ---- storage codec: hand-written encoder/decoder vs the rlp crate ----
+struct CodecRng(u64);
+impl CodecRng {
+    fn next(&mut self) -> u64 { let mut x = self.0; x ^= x << 13; x ^= x >> 7; x ^= x << 17; self.0 = x; x }
+    fn bytes(&mut self, max: u64) -> Vec<u8> {
+        let n = (self.next() % max) as usize;
+        (0..n).map(|_| match self.next() % 4 { 0 => 0u8, 1 => 0x7f, 2 => 0x80 | (self.next() as u8), _ => self.next() as u8 }).collect()
+    }
+    /// a child reference item as it occurs: inlined RLP (<32 bytes) or 0xa0 + 32-byte hash
+    fn refitem(&mut self) -> Vec<u8> {
+        if self.next() % 3 == 0 { let n = 1 + (self.next() % 31) as usize; (0..n).map(|_| self.next() as u8).collect() }
+        else { let h: Vec<u8> = (0..32).map(|_| self.next() as u8).collect(); rlp::encode(&h.as_slice()).to_vec() }
+    }
+    fn ptr(&mut self) -> u64 {
+        const P: [u64; 8] = [0, 1, 0x7f, 0x80, 0xff, 0x100, 0xffff_ffff, u64::MAX];
+        if self.next() % 2 == 0 { P[(self.next() % 8) as usize] } else { let s = self.next() % 64; self.next() >> s }
+    }
+}
+
+#[test]
+fn storage_codec_matches_rlp_crate() {
+    use crate::merkle::node::{Branch, Child, Node, NodePtr, NodeType, Short, Value};
+    let mut r = CodecRng(0x1234_5678_9abc_def1);
+    for iter in 0..20000 {
+        let node = match iter % 3 {
+            0 => {
+                let mut b = Branch::new();
+                b.hash = r.bytes(40);
+                for k in 0..b.children.len() {
+                    b.children[k] = match r.next() % 3 { 0 => None, 1 => Some(Child::Ptr(NodePtr::Clean(r.ptr()))), _ => Some(Child::Hash(r.ptr(), vec![1, 2])) };
+                }
+                b.aha_len = r.next() as u8;
+                b.aha_ptr = r.ptr();
+                Node(NodeType::Branch(Box::new(b)))
+            }
+            1 => { let hash = r.bytes(40); let path = r.bytes(70); let p = r.ptr(); Node(NodeType::Short(Short { hash, path, child: Child::Ptr(NodePtr::Clean(p)) })) }
+            _ => { let value = r.bytes(400); let extra = r.bytes(60); Node(NodeType::Value(Value { value, extra })) }
+        };
+        let fast = node.encode();
+        let slow = node.encode_rlp();
+        assert_eq!(fast, slow, "encoding differs (iter {iter})");
+        assert_eq!(crate::merkle::codec::encoded_len(node.get_inner()), slow.len());
+        let dec = crate::merkle::codec::decode(&slow).expect("fast decoder rejected canonical input");
+        assert_eq!(Node(dec).encode_rlp(), slow, "decode/re-encode differs (iter {iter})");
+    }
+}
+
+#[test]
+fn canonical_rlp_matches_rlp_crate() {
+    use crate::merkle::codec;
+    use crate::merkle::node::{Child, NodePtr};
+    use crate::merkle::NBRANCH;
+    let mut r = CodecRng(0x0bad_cafe_dead_beef);
+    for iter in 0..20000 {
+        // byte strings of all sizes incl. single bytes < / >= 0x80 and > 55 bytes
+        let v = r.bytes(if iter % 4 == 0 { 3 } else { 90 });
+        assert_eq!(codec::rlp_bytes(&v), rlp::encode(&v).to_vec(), "bytes iter {iter}");
+        // reference items as they occur: inlined RLP (<32 bytes) or 0xa0+32
+        let mut children: [Option<Child>; NBRANCH + 1] = std::array::from_fn(|_| None);
+        for c in children.iter_mut() {
+            if r.next() % 2 == 1 { *c = Some(Child::Hash(0, r.refitem())); }
+        }
+        let mut s = rlp::RlpStream::new_list(NBRANCH + 1);
+        for c in children.iter() {
+            match c { None => { s.append_empty_data(); } Some(Child::Hash(_, h)) => { s.append_raw(h, 1); } _ => unreachable!() }
+        }
+        assert_eq!(codec::branch_rlp(&children).unwrap(), s.out().to_vec(), "branch iter {iter}");
+        let compact = r.bytes(40);
+        let h = r.refitem();
+        let mut s = rlp::RlpStream::new_list(2);
+        s.append(&compact);
+        s.append_raw(&h, 1);
+        assert_eq!(codec::short_rlp(&compact, &h), s.out().to_vec(), "short iter {iter}");
+        let _ = NodePtr::Clean(0);
+    }
+}

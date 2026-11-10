@@ -1,4 +1,5 @@
 mod aha;
+pub(crate) mod codec;
 mod backend;
 mod merkle;
 mod node;

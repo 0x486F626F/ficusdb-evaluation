@@ -15,9 +15,16 @@ use std::time::Instant;
 
 type EncodedLen = u16;
 
+/// Commits between AHA flushes (see `NodeStore::flush_commit`).
+const AHA_FLUSH_INTERVAL: u64 = 64;
+
 pub struct NodeStore {
     dirty: Vec<Option<Node>>,
     clean: LruCache<CleanPtr, Node>,
+    // a node the cache refused (larger than the whole cache), so get_clean can return it
+    oversize: Option<(CleanPtr, Node)>,
+    // commits since the AHA files were last flushed (see flush_commit)
+    commits_since_aha_flush: u64,
 
     backend: Box<dyn Backend>,
     aha: Option<AggregatedHashArray>,
@@ -34,6 +41,8 @@ impl NodeStore {
         Self {
             dirty: Vec::new(),
             clean: LruCache::new(cache_size),
+            oversize: None,
+            commits_since_aha_flush: 0,
             backend,
             aha,
             #[cfg(feature = "stats")]
@@ -75,7 +84,10 @@ impl NodeStore {
             #[cfg(feature = "stats")]
             let load_timer = Instant::now();
             let node = self.get_node(cptr).unwrap();
-            let _ = self.clean.insert(cptr, node);
+            if let Err(lru_mem::InsertError::EntryTooLarge { value, .. }) = self.clean.insert(cptr, node) {
+                self.oversize = Some((cptr, value));
+                return &self.oversize.as_ref().unwrap().1;
+            }
             #[cfg(feature = "stats")]
             {
                 self.stats.node_miss += 1;
@@ -160,6 +172,21 @@ impl NodeStore {
     pub fn flush(&mut self) {
         if let Some(aha) = &mut self.aha {
             aha.flush();
+        }
+        self.backend.flush();
+    }
+
+    /// Per-commit flush: node pages every commit, AHA pages every AHA_FLUSH_INTERVAL
+    /// commits. AHA entries are validated against the branch hash when read (load_aha), so
+    /// AHA pages that are stale or missing after a crash only cost a fallback load of the
+    /// children's hashes, never a wrong result. `flush` (e.g. on drop) still flushes all.
+    pub fn flush_commit(&mut self) {
+        self.commits_since_aha_flush += 1;
+        if self.commits_since_aha_flush >= AHA_FLUSH_INTERVAL {
+            if let Some(aha) = &mut self.aha {
+                aha.flush();
+            }
+            self.commits_since_aha_flush = 0;
         }
         self.backend.flush();
     }

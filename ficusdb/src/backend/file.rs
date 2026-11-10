@@ -141,14 +141,36 @@ impl PageCachedFile {
     pub fn flush(&mut self) {
         #[cfg(feature = "stats")]
         let flush_timer = std::time::Instant::now();
+        // Same pages as writing each dirty page separately, fewer syscalls: write every
+        // contiguous run of dirty pages with one pwrite, stop the last page at the logical
+        // tail, and call set_len only if the file length is still not the logical tail.
+        let mut pids: Vec<u64> = self.dirty.keys().copied().collect();
+        pids.sort_unstable();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut file_len = self.file_tail;
+        let mut i = 0;
+        while i < pids.len() {
+            let mut j = i;
+            while j + 1 < pids.len() && pids[j + 1] == pids[j] + 1 {
+                j += 1;
+            }
+            buf.clear();
+            for pid in &pids[i..=j] {
+                buf.extend_from_slice(&self.dirty[pid]);
+            }
+            let off = pids[i] << PAGE_BITS;
+            let end = (off + buf.len() as u64).min(self.buff_tail.max(off));
+            self.file.write_all_at(&buf[..(end - off) as usize], off).unwrap();
+            file_len = file_len.max(end);
+            i = j + 1;
+        }
         for (pid, page) in self.dirty.drain() {
-            let ptr = pid << PAGE_BITS;
-            self.file.write_at(&page, ptr).unwrap();
             let _ = self.clean.put(pid, page);
         }
-        self.dirty.clear();
         // Keep on-disk length consistent with logical tail.
-        self.file.set_len(self.buff_tail).unwrap();
+        if file_len != self.buff_tail {
+            self.file.set_len(self.buff_tail).unwrap();
+        }
         self.file_tail = self.buff_tail;
         #[cfg(feature = "stats")]
         {

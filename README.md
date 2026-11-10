@@ -55,17 +55,46 @@ It compares **FicusDB** against two baselines:
 - **Geth-TrieDB**
 - **ChainKV**
 
-It can also include **PrunusDB**, built from the sibling `arbora` repo (default path `../arbora/prunus/prunusdb`; set `PRUNUSDB_DIR` to override).
+It can also include **PrunusDB** (see below).
 
-To run only some systems, set `SYSTEMS` (space-separated; default `"ficus geth chainkv prunus"`) for both `micro-bench-init.sh` and `micro-bench.sh`, e.g.:
+### Running with or without PrunusDB
+
+FicusDB, Geth-TrieDB and ChainKV are built from this repository. PrunusDB is built from the
+separate **arbora** repositories, which must be checked out **next to** `ficusdb-evaluation`:
+
+```
+<parent>/
+├── ficusdb-evaluation/        # this repository
+└── arbora/                    # PrunusDB (only needed to run PrunusDB)
+    ├── prunus/                #   github.com/arbora-systems/prunus          branch del-log
+    ├── backend-common/        #   github.com/arbora-systems/backend-common  branch main
+    ├── bamboo/                #   github.com/arbora-systems/bamboo          branch del-log
+    └── eth-statedb/           #   github.com/arbora-systems/eth-statedb     branch bytes-encoding
+```
+
+The scripts build PrunusDB from `../arbora/prunus/prunusdb` (relative to this repository);
+set `PRUNUSDB_DIR` to use another location. Both `micro-bench-init.sh` and `micro-bench.sh`
+choose the systems the same way (they print the list they use):
+
+| What | How |
+|---|---|
+| Default (`SYSTEMS` unset) | FicusDB, Geth, ChainKV, **plus PrunusDB if `../arbora` exists** |
+| Without PrunusDB | `SYSTEMS="ficus geth chainkv" ./micro-bench-init.sh` (and the same for `./micro-bench.sh`), or simply run without `../arbora` |
+| With PrunusDB | check out arbora as above, then run the scripts as usual |
+| Only some systems | e.g. `SYSTEMS=prunus` or `SYSTEMS="ficus prunus"` |
+| Only some dataset sizes | `KEY_SIZES=20m` (default `"20m 100m"`) |
+
+If `SYSTEMS` names `prunus` but the arbora checkout is missing, the scripts stop with an error.
+Pass the same `SYSTEMS` / `KEY_SIZES` to both scripts, e.g. a 20M-key run with PrunusDB:
 
 ```bash
 cd scripts
-SYSTEMS=prunus ./micro-bench-init.sh
-SYSTEMS=prunus ./micro-bench.sh
+KEY_SIZES=20m ./micro-bench-init.sh
+KEY_SIZES=20m ./micro-bench.sh
+python3 micro-plot.py
 ```
 
-`micro-plot.py` adds PrunusDB bars/lines whenever its logs are present.
+`micro-plot.py` adds the PrunusDB bars/lines whenever its logs are present and skips them otherwise.
 
 ### 1) Download key-frequency data, populate databases, and generate workload traces
 
@@ -82,10 +111,11 @@ This will download and unzip `micro-bench-keys.zip` into `data/micro/`, containi
 
 Each line in `*.keys` is `key frequency`, where the frequency is computed from real Ethereum block execution traces.
 
-It then populates **three** different databases:
+It then populates one database per selected system:
 - **FicusDB**
 - **Geth-TrieDB**
 - **ChainKV**
+- **PrunusDB** (if selected; see above)
 
 Each database is populated at **two** different dataset sizes using the two key files:
 - **20M keys** (`micro-20m.keys`)

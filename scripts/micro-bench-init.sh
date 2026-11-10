@@ -1,3 +1,4 @@
+#!/bin/bash
 ficusdb_dir=../ficusdb
 ficusdb=$ficusdb_dir/target/release/examples/micro-bench
 db_dir=../db
@@ -6,9 +7,25 @@ data_dir=../data/micro
 go_bench_dir=../micro-bench-go
 go_bench=$go_bench_dir/micro-bench
 
+# PrunusDB lives in the sibling arbora repo; override with PRUNUSDB_DIR if elsewhere.
+prunusdb_dir=${PRUNUSDB_DIR:-../../arbora/prunus/prunusdb}
+prunusdb=$prunusdb_dir/target/release/examples/micro-bench
+
 cache_size=${1:-16384}   # MB
 batch_size=${2:-2000}
 val_size=${3:-200}       # bytes
+# Systems to populate (space-separated), e.g. SYSTEMS=prunus ./micro-bench-init.sh
+systems=${SYSTEMS:-"ficus geth chainkv prunus"}
+# Dataset sizes to run (space-separated), e.g. KEY_SIZES=20m
+key_sizes=${KEY_SIZES:-"20m 100m"}
+
+has_key_size() {
+    [[ " $key_sizes " == *" $1 "* ]]
+}
+
+has_system() {
+    [[ " $systems " == *" $1 "* ]]
+}
 
 ensure_keys() {
     mkdir -p $data_dir/
@@ -23,6 +40,12 @@ ensure_keys() {
 
 compile_ficus() {
     cd $ficusdb_dir
+    cargo build --release --features stats --example micro-bench
+    cd -
+}
+
+compile_prunus() {
+    cd $prunusdb_dir
     cargo build --release --features stats --example micro-bench
     cd -
 }
@@ -52,6 +75,25 @@ populate_ficus() {
     cp -r $dbpath $backup_path
 }
 
+populate_prunus() {
+    key_size=$1
+    cache_size=$2
+    batch_size=$3
+    val_size=$4
+    dbpath=$db_dir/micro-prunus-$key_size
+    wlpath=$data_dir/micro-$key_size.keys
+    verpath=$dbpath/vers
+
+    rm -rf $dbpath
+    mkdir -p $dbpath
+    echo "prunus init $dbpath $wlpath $verpath $cache_size $batch_size $val_size"
+    $prunusdb init $dbpath $wlpath $verpath $cache_size $batch_size $val_size
+
+    backup_path=$db_dir/backup-prunus-$key_size
+    rm -rf $backup_path
+    cp -r $dbpath $backup_path
+}
+
 populate_go_bench() {
     dbname=$1
     key_size=$2
@@ -73,25 +115,30 @@ populate_go_bench() {
 }
 
 populate_all() {
-    populate_ficus 20m $cache_size $batch_size $val_size
-    populate_go_bench geth 20m $cache_size $batch_size $val_size
-    populate_go_bench chainkv 20m $cache_size $batch_size $val_size
-
-    populate_ficus 100m $cache_size $batch_size $val_size
-    populate_go_bench geth 100m $cache_size $batch_size $val_size
-    populate_go_bench chainkv 100m $cache_size $batch_size $val_size
+    for key_size in $key_sizes; do
+        has_system ficus   && populate_ficus $key_size $cache_size $batch_size $val_size
+        has_system geth    && populate_go_bench geth $key_size $cache_size $batch_size $val_size
+        has_system chainkv && populate_go_bench chainkv $key_size $cache_size $batch_size $val_size
+        has_system prunus  && populate_prunus $key_size $cache_size $batch_size $val_size
+    done
 }
 
 generate_trace() {
     nops=50000000
-    echo "Generating micro-20m-50m.ops"
-    python3 generate-bench-trace.py $data_dir/micro-20m.keys $nops $data_dir/micro-20m-50m.ops
-    echo "Generating micro-100m-50m.ops"
-    python3 generate-bench-trace.py $data_dir/micro-100m.keys $nops $data_dir/micro-100m-50m.ops
+    for key_size in 20m 100m; do
+        out=$data_dir/micro-$key_size-50m.ops
+        if [ -f "$out" ]; then
+            echo "$out exists, skipping"
+            continue
+        fi
+        echo "Generating micro-$key_size-50m.ops"
+        python3 generate-bench-trace.py $data_dir/micro-$key_size.keys $nops $out
+    done
 }
 
-compile_ficus
-compile_go_bench
+has_system ficus && compile_ficus
+{ has_system geth || has_system chainkv; } && compile_go_bench
+has_system prunus && compile_prunus
 ensure_keys
 populate_all
 generate_trace

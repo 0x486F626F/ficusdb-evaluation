@@ -55,6 +55,18 @@ It compares **FicusDB** against two baselines:
 - **Geth-TrieDB**
 - **ChainKV**
 
+It can also include **PrunusDB**, built from the sibling `arbora` repo (default path `../arbora/prunus/prunusdb`; set `PRUNUSDB_DIR` to override).
+
+To run only some systems, set `SYSTEMS` (space-separated; default `"ficus geth chainkv prunus"`) for both `micro-bench-init.sh` and `micro-bench.sh`, e.g.:
+
+```bash
+cd scripts
+SYSTEMS=prunus ./micro-bench-init.sh
+SYSTEMS=prunus ./micro-bench.sh
+```
+
+`micro-plot.py` adds PrunusDB bars/lines whenever its logs are present.
+
 ### 1) Download key-frequency data, populate databases, and generate workload traces
 
 Run:

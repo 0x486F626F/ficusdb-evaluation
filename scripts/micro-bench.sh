@@ -1,7 +1,11 @@
+#!/bin/bash
 ficusdb_dir=../ficusdb
 ficusdb=$ficusdb_dir/target/release/examples/micro-bench
 go_bench_dir=../micro-bench-go
 go_bench=$go_bench_dir/micro-bench
+# PrunusDB lives in the sibling arbora repo; override with PRUNUSDB_DIR if elsewhere.
+prunusdb_dir=${PRUNUSDB_DIR:-../../arbora/prunus/prunusdb}
+prunusdb=$prunusdb_dir/target/release/examples/micro-bench
 db_dir=../db
 data_dir=../data/micro
 log_dir=../logs/
@@ -12,6 +16,18 @@ mkdir -p $log_dir/vget
 mkdir -p $log_dir/lru
 
 versions=2000
+# Systems to run (space-separated), e.g. SYSTEMS=prunus ./micro-bench.sh
+systems=${SYSTEMS:-"ficus geth chainkv prunus"}
+# Dataset sizes to run (space-separated), e.g. KEY_SIZES=20m
+key_sizes=${KEY_SIZES:-"20m 100m"}
+
+has_key_size() {
+    [[ " $key_sizes " == *" $1 "* ]]
+}
+
+has_system() {
+    [[ " $systems " == *" $1 "* ]]
+}
 
 ficus_compile() {
     cd $ficusdb_dir
@@ -118,6 +134,88 @@ go_put() {
     cp -r  $backup_path $dbpath
 }
 
+prunus_compile() {
+    cd $prunusdb_dir
+    cargo build --release --features stats --example micro-bench
+    cd -
+}
+
+# PrunusDB's micro-bench driver takes the same CLI as FicusDB's.
+prunus_get() {
+    key_size=$1
+    ops_size=$2
+    cache_size=$3
+    batch_size=$4
+    dbpath=$db_dir/micro-prunus-$key_size
+    wlpath=$data_dir/micro-$key_size-$ops_size.ops
+    verpath=$dbpath/vers
+    logpath=$log_dir/get/micro-get-prunus-$key_size-$ops_size-$cache_size.log
+
+    $prunusdb get $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
+}
+
+prunus_put() {
+    key_size=$1
+    ops_size=$2
+    cache_size=$3
+    batch_size=$4
+    val_size=$5
+    versions=$6
+    dbpath=$db_dir/micro-prunus-$key_size
+    wlpath=$data_dir/micro-$key_size-$ops_size.ops
+    verpath=$dbpath/vers
+    logpath=$log_dir/put/micro-put-prunus-$key_size-$ops_size-$cache_size-$val_size-$batch_size.log
+
+    $prunusdb put $dbpath $wlpath $verpath $cache_size $batch_size $val_size $versions > $logpath
+
+    backup_path=$db_dir/backup-prunus-$key_size
+    rm -rf $dbpath
+    cp -r  $backup_path $dbpath
+}
+
+prunus_vget() {
+    key_size=$1
+    ops_size=$2
+    cache_size=$3
+    batch_size=$4
+    dbpath=$db_dir/micro-prunus-$key_size
+    wlpath=$data_dir/micro-$key_size-$ops_size.ops
+    verpath=$dbpath/vers
+    logpath=$log_dir/vget/micro-vget-prunus-$key_size-$ops_size-$cache_size.log
+
+    $prunusdb vget $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
+}
+
+prunus_expr() {
+    prunus_compile
+    key_size=$1
+
+    dbpath=$db_dir/micro-prunus-$key_size
+    backup_path=$db_dir/backup-prunus-$key_size
+    rm -rf $dbpath
+    cp -r  $backup_path $dbpath
+
+    for cache_size in 1024 2048 4096 8192 16384; do
+        echo "prunus_put $key_size 50m $cache_size 2000 200 $versions"
+        prunus_put $key_size 50m $cache_size 2000 200 $versions
+    done
+
+    for cache_size in 1024 2048 4096 8192 16384; do
+        echo "prunus_get $key_size 50m $cache_size 100000"
+        prunus_get $key_size 50m $cache_size 100000
+    done
+
+    wlpath=$data_dir/micro-$key_size-50m.ops
+    verpath=$dbpath/vers
+    echo "populating versions..."
+    $prunusdb put $dbpath $wlpath $verpath 16384 2000 200 $versions > /dev/null
+
+    for cache_size in 1024 2048 4096 8192 16384; do
+        echo "prunus_vget $key_size 50m $cache_size 10000"
+        prunus_vget $key_size 50m $cache_size 10000
+    done
+}
+
 ficus_expr() {
     ficus_compile
     key_size=$1
@@ -211,6 +309,7 @@ ficus_lru() {
         $ficusdb vget $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
     done
 
+    has_key_size 100m || return 0
     for cache_size in 1024 2048 4096 8192 16384; do
         logpath=$log_dir/lru/micro-lru-ficus-100m-50m-$cache_size.log
         wlpath=$data_dir/micro-100m-50m.ops
@@ -220,11 +319,23 @@ ficus_lru() {
     done
 }
 
-ficus_expr 20m
-ficus_expr 100m
-go_expr geth 20m
-go_expr geth 100m
-go_expr chainkv 20m
-go_expr chainkv 100m
-ficus_batch 20m
-ficus_lru
+if has_system ficus; then
+    has_key_size 20m && ficus_expr 20m
+    has_key_size 100m && ficus_expr 100m
+fi
+if has_system geth; then
+    has_key_size 20m && go_expr geth 20m
+    has_key_size 100m && go_expr geth 100m
+fi
+if has_system chainkv; then
+    has_key_size 20m && go_expr chainkv 20m
+    has_key_size 100m && go_expr chainkv 100m
+fi
+if has_system prunus; then
+    has_key_size 20m && prunus_expr 20m
+    has_key_size 100m && prunus_expr 100m
+fi
+if has_system ficus; then
+    ficus_batch 20m
+    ficus_lru
+fi

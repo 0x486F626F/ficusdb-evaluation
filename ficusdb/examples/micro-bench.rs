@@ -7,6 +7,14 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write, Seek, SeekFrom};
 use std::time::Instant;
 
+/// Trace keys are "0x"-prefixed hex addresses. Decode them to raw bytes, as ads-bench does
+/// (hex::decode(&key[2..])), so the trie is keyed by the 20-byte address, not its ASCII text.
+fn decode_key(key: &str) -> Vec<u8> {
+    let s = key.strip_prefix("0x").unwrap_or(key);
+    assert!(s.len() % 2 == 0, "odd-length hex key {key}");
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("bad hex key")).collect()
+}
+
 fn open_db(dbpath: &str, cachesize: usize) -> DB {
     let cfg = DBConfig::builder()
         .truncate(false)
@@ -39,8 +47,9 @@ fn bench_init(db: &mut DB, wlpath: &str, verpath: &str, batch_size: usize, val_s
         if key.is_empty() {
             continue;
         }
+        let key = decode_key(key);
         let val = random_bytes(val_size);
-        wb.insert(key.as_bytes(), &val);
+        wb.insert(&key, &val);
         in_batch += 1;
 
         if in_batch >= batch_size {
@@ -93,9 +102,10 @@ fn bench_put(db: &mut DB, wlpath: &str, verpath: &str, batch_size: usize, val_si
         if key.is_empty() {
             continue;
         }
+        let key = decode_key(key);
         let val = random_bytes(val_size);
         let t_start = Instant::now();
-        wb.insert(key.as_bytes(), &val);
+        wb.insert(&key, &val);
         t_ops += t_start.elapsed().as_secs_f64();
         in_batch += 1;
 
@@ -145,8 +155,9 @@ fn bench_get(db: &mut DB, wlpath: &str, batch_size: usize) {
         if key.is_empty() {
             continue;
         }
+        let key = decode_key(key);
         let t_start = Instant::now();
-        let _val = db.get(key.as_bytes());
+        let _val = db.get(&key);
         t_ops += t_start.elapsed().as_secs_f64();
         in_batch += 1;
 
@@ -193,10 +204,11 @@ fn bench_vget(db: &mut DB, wlpath: &str, verpath: &str, batch_size: usize) {
         if key.is_empty() {
             continue;
         }
+        let key = decode_key(key);
         let veridx = exp.sample(&mut rng) as usize % vers.len();
         let t_start = Instant::now();
         db.open_root(vers[veridx]);
-        let _val = db.get(key.as_bytes());
+        let _val = db.get(&key);
         t_ops += t_start.elapsed().as_secs_f64();
         in_batch += 1;
 

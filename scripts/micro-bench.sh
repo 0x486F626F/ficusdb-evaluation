@@ -5,6 +5,14 @@ go_bench_dir=../micro-bench-go
 go_bench=$go_bench_dir/micro-bench
 # PrunusDB lives in the sibling arbora repo; override with PRUNUSDB_DIR if elsewhere.
 prunusdb_dir=${PRUNUSDB_DIR:-../../arbora/prunus/prunusdb}
+# PrunusDB node-hash variant: child_hash (default), aha, or original. Init and bench must use
+# the same variant (the on-disk formats differ).
+case "${PRUNUS_VARIANT:-child_hash}" in
+    child_hash) prunus_features="--features stats" ;;
+    aha)        prunus_features="--no-default-features --features stats,aha" ;;
+    original)   prunus_features="--no-default-features --features stats" ;;
+    *) echo "PRUNUS_VARIANT must be child_hash, aha or original (got '$PRUNUS_VARIANT')"; exit 1 ;;
+esac
 prunusdb=$prunusdb_dir/target/release/examples/micro-bench
 db_dir=../db
 data_dir=../data/micro
@@ -151,7 +159,7 @@ go_put() {
 
 prunus_compile() {
     cd $prunusdb_dir
-    cargo build --release --features stats --example micro-bench
+    cargo build --release $prunus_features --example micro-bench
     cd -
 }
 

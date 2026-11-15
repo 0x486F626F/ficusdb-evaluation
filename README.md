@@ -85,6 +85,18 @@ choose the systems the same way (they print the list they use):
 | Only some dataset sizes | `KEY_SIZES=20m` (default `"20m 100m"`) |
 
 If `SYSTEMS` names `prunus` but the arbora checkout is missing, the scripts stop with an error.
+
+PrunusDB has three node-hash variants, chosen at compile time. The scripts build the one named by
+`PRUNUS_VARIANT`; init and bench must use the same variant, since the on-disk formats differ.
+
+| Variant | `PRUNUS_VARIANT` | Build command (in `arbora/prunus/prunusdb`) |
+|---|---|---|
+| child_hash: each node stores its children's hashes (**default**) | unset or `child_hash` | `cargo build --release --example micro-bench` |
+| AHA: FicusDB-style aggregated hash arrays (`aha_4/8/12/16` files) | `aha` | `cargo build --release --no-default-features --features aha --example micro-bench` |
+| original: no stored child hashes | `original` | `cargo build --release --no-default-features --example micro-bench` |
+
+For example, `PRUNUS_VARIANT=aha SYSTEMS=prunus KEY_SIZES=20m ./micro-bench-init.sh`, then the same
+variables for `./micro-bench.sh`. The scripts add `--features stats` to each build.
 Pass the same `SYSTEMS` / `KEY_SIZES` to both scripts, e.g. a 20M-key run with PrunusDB:
 
 ```bash

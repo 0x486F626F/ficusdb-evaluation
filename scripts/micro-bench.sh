@@ -14,6 +14,12 @@ case "${PRUNUS_VARIANT:-child_hash}" in
     *) echo "PRUNUS_VARIANT must be child_hash, aha or original (got '$PRUNUS_VARIANT')"; exit 1 ;;
 esac
 prunusdb=$prunusdb_dir/target/release/examples/micro-bench
+# prunus-new (the newer Prunus storage engine) is a separate system, SYSTEMS=prunus-new. It needs the
+# prunus-new branches of backend-common and eth-statedb, so it has its own sibling checkout,
+# arbora-new/ (see README); override with PRUNUS_NEW_DIR. It uses the same PRUNUS_VARIANT (child_hash
+# or original; it has no AHA variant) and the same micro-bench CLI, with its own db/ and logs/ names.
+prunusnew_dir=${PRUNUS_NEW_DIR:-../../arbora-new/prunus-new/prunusdb}
+prunusnew=$prunusnew_dir/target/release/examples/micro-bench
 db_dir=../db
 data_dir=../data/micro
 log_dir=../logs/
@@ -26,7 +32,7 @@ mkdir -p $log_dir/lru
 versions=2000
 # Systems (space-separated), e.g. SYSTEMS="ficus geth chainkv" or SYSTEMS=prunus.
 # Default: FicusDB, Geth and ChainKV, plus PrunusDB when the arbora checkout next to
-# ficusdb-evaluation (i.e. $prunusdb_dir) exists.
+# ficusdb-evaluation (i.e. $prunusdb_dir) exists. prunus-new runs only when named in SYSTEMS.
 if [ -n "${SYSTEMS+x}" ]; then
     systems=$SYSTEMS
 elif [ -d "$prunusdb_dir" ]; then
@@ -48,6 +54,15 @@ has_system() {
 if has_system prunus && [ ! -d "$prunusdb_dir" ]; then
     echo "error: SYSTEMS includes prunus, but $prunusdb_dir does not exist." >&2
     echo "Check out arbora next to ficusdb-evaluation (see README) or set PRUNUSDB_DIR." >&2
+    exit 1
+fi
+if has_system prunus-new && [ ! -d "$prunusnew_dir" ]; then
+    echo "error: SYSTEMS includes prunus-new, but $prunusnew_dir does not exist." >&2
+    echo "Check out arbora-new next to ficusdb-evaluation (see README) or set PRUNUS_NEW_DIR." >&2
+    exit 1
+fi
+if has_system prunus-new && [ "${PRUNUS_VARIANT:-child_hash}" = aha ]; then
+    echo "error: prunus-new has no aha variant (use PRUNUS_VARIANT=child_hash or original)." >&2
     exit 1
 fi
 echo "systems: $systems"
@@ -157,85 +172,98 @@ go_put() {
     cp -r  $backup_path $dbpath
 }
 
+# prunus_compile <prunusdb dir>
 prunus_compile() {
-    cd $prunusdb_dir
+    cd $1
     cargo build --release $prunus_features --example micro-bench
     cd -
 }
 
-# PrunusDB's micro-bench driver takes the same CLI as FicusDB's.
+# PrunusDB's micro-bench driver takes the same CLI as FicusDB's. The prunus_* functions run either
+# PrunusDB or prunus-new: <name> (prunus or prunus-new) names the db/ and logs/ files and <bin> is
+# that system's micro-bench binary.
 prunus_get() {
-    key_size=$1
-    ops_size=$2
-    cache_size=$3
-    batch_size=$4
-    dbpath=$db_dir/micro-prunus-$key_size
+    name=$1
+    bin=$2
+    key_size=$3
+    ops_size=$4
+    cache_size=$5
+    batch_size=$6
+    dbpath=$db_dir/micro-$name-$key_size
     wlpath=$data_dir/micro-$key_size-$ops_size.ops
     verpath=$dbpath/vers
-    logpath=$log_dir/get/micro-get-prunus-$key_size-$ops_size-$cache_size.log
+    logpath=$log_dir/get/micro-get-$name-$key_size-$ops_size-$cache_size.log
 
-    $prunusdb get $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
+    $bin get $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
 }
 
 prunus_put() {
-    key_size=$1
-    ops_size=$2
-    cache_size=$3
-    batch_size=$4
-    val_size=$5
-    versions=$6
-    dbpath=$db_dir/micro-prunus-$key_size
+    name=$1
+    bin=$2
+    key_size=$3
+    ops_size=$4
+    cache_size=$5
+    batch_size=$6
+    val_size=$7
+    versions=$8
+    dbpath=$db_dir/micro-$name-$key_size
     wlpath=$data_dir/micro-$key_size-$ops_size.ops
     verpath=$dbpath/vers
-    logpath=$log_dir/put/micro-put-prunus-$key_size-$ops_size-$cache_size-$val_size-$batch_size.log
+    logpath=$log_dir/put/micro-put-$name-$key_size-$ops_size-$cache_size-$val_size-$batch_size.log
 
-    $prunusdb put $dbpath $wlpath $verpath $cache_size $batch_size $val_size $versions > $logpath
+    $bin put $dbpath $wlpath $verpath $cache_size $batch_size $val_size $versions > $logpath
 
-    backup_path=$db_dir/backup-prunus-$key_size
+    backup_path=$db_dir/backup-$name-$key_size
     rm -rf $dbpath
     cp -r  $backup_path $dbpath
 }
 
 prunus_vget() {
-    key_size=$1
-    ops_size=$2
-    cache_size=$3
-    batch_size=$4
-    dbpath=$db_dir/micro-prunus-$key_size
+    name=$1
+    bin=$2
+    key_size=$3
+    ops_size=$4
+    cache_size=$5
+    batch_size=$6
+    dbpath=$db_dir/micro-$name-$key_size
     wlpath=$data_dir/micro-$key_size-$ops_size.ops
     verpath=$dbpath/vers
-    logpath=$log_dir/vget/micro-vget-prunus-$key_size-$ops_size-$cache_size.log
+    logpath=$log_dir/vget/micro-vget-$name-$key_size-$ops_size-$cache_size.log
 
-    $prunusdb vget $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
+    $bin vget $dbpath $wlpath $verpath $cache_size $batch_size > $logpath
 }
 
+# prunus_expr <prunus|prunus-new> <prunusdb dir> <key_size>
 prunus_expr() {
-    prunus_compile
-    key_size=$1
+    name=$1
+    dir=$2
+    key_size=$3
+    bin=$dir/target/release/examples/micro-bench
+    prunus_compile $dir
 
-    dbpath=$db_dir/micro-prunus-$key_size
-    backup_path=$db_dir/backup-prunus-$key_size
+    dbpath=$db_dir/micro-$name-$key_size
+    backup_path=$db_dir/backup-$name-$key_size
     rm -rf $dbpath
     cp -r  $backup_path $dbpath
 
     for cache_size in 1024 2048 4096 8192 16384; do
-        echo "prunus_put $key_size 50m $cache_size 2000 200 $versions"
-        prunus_put $key_size 50m $cache_size 2000 200 $versions
+        echo "${name}_put $key_size 50m $cache_size 2000 200 $versions"
+        prunus_put $name $bin $key_size 50m $cache_size 2000 200 $versions
     done
 
     for cache_size in 1024 2048 4096 8192 16384; do
-        echo "prunus_get $key_size 50m $cache_size 100000"
-        prunus_get $key_size 50m $cache_size 100000
+        echo "${name}_get $key_size 50m $cache_size 100000"
+        prunus_get $name $bin $key_size 50m $cache_size 100000
     done
 
     wlpath=$data_dir/micro-$key_size-50m.ops
     verpath=$dbpath/vers
     echo "populating versions..."
-    $prunusdb put $dbpath $wlpath $verpath 16384 2000 200 $versions > /dev/null
+    $bin put $dbpath $wlpath $verpath 16384 2000 200 $versions > /dev/null
 
     for cache_size in 1024 2048 4096 8192 16384; do
-        echo "prunus_vget $key_size 50m $cache_size 10000"
-        prunus_vget $key_size 50m $cache_size 10000
+        echo "${name}_vget $key_size 50m $cache_size 10000"
+        prunus_vget $name $bin $key_size 50m $cache_size 10000
     done
 }
 
@@ -355,8 +383,12 @@ if has_system chainkv; then
     has_key_size 100m && go_expr chainkv 100m
 fi
 if has_system prunus; then
-    has_key_size 20m && prunus_expr 20m
-    has_key_size 100m && prunus_expr 100m
+    has_key_size 20m && prunus_expr prunus $prunusdb_dir 20m
+    has_key_size 100m && prunus_expr prunus $prunusdb_dir 100m
+fi
+if has_system prunus-new; then
+    has_key_size 20m && prunus_expr prunus-new $prunusnew_dir 20m
+    has_key_size 100m && prunus_expr prunus-new $prunusnew_dir 100m
 fi
 if has_system ficus; then
     ficus_batch 20m

@@ -8,7 +8,7 @@ import matplotlib.gridspec as gridspec
 import re
 
 # FicusDB, Geth, ChainKV, FicusDB-LRU, PrunusDB
-color = ['#EA6B66', '#7EA6E0', '#97D077', '#FFB570', '#A680B8']
+color = ['#EA6B66', '#7EA6E0', '#97D077', '#FFB570', '#A680B8', '#67AB9F']
 CACHE_SIZES = [1024, 2048, 4096, 8192, 16384]
 
 def load_ficus_log(log_file):
@@ -70,6 +70,8 @@ SYSTEMS = [
     ('geth',    load_geth_log,    color[1], 'geth-get',    'geth-vget',    'geth'),
     ('chainkv', load_chainkv_log, color[2], 'chainkv-get', 'chainkv-vget', 'chainkv'),
     ('prunus',  load_prunus_log,  color[4], 'prunus',      'prunus-ver',   'prunus'),
+    # prunus-new writes PrunusDB-format logs.
+    ('prunus-new', load_prunus_log, color[5], 'prunus-new', 'prunus-new-ver', 'prunus-new'),
 ]
 
 def log_path(system, key_size, ops, cache_size, val_size=200, batch_size=2000):
@@ -172,6 +174,8 @@ def plot_miss(axs, title):
         ('ficus',  load_ficus_log,  '100m', 'lru', 'ficus-lru-100m', color[3]),
         ('prunus', load_prunus_log, '20m',  'get', 'prunus-20m',     color[4]),
         ('prunus', load_prunus_log, '100m', 'get', 'prunus-100m',    color[4]),
+        ('prunus-new', load_prunus_log, '20m',  'get', 'prunus-new-20m',  color[5]),
+        ('prunus-new', load_prunus_log, '100m', 'get', 'prunus-new-100m', color[5]),
     ]
     for system, loader, key_size, op, label, col in lines:
         if op == 'lru':

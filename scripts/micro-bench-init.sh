@@ -18,13 +18,19 @@ case "${PRUNUS_VARIANT:-child_hash}" in
     *) echo "PRUNUS_VARIANT must be child_hash, aha or original (got '$PRUNUS_VARIANT')"; exit 1 ;;
 esac
 prunusdb=$prunusdb_dir/target/release/examples/micro-bench
+# prunus-new (the newer Prunus storage engine) is a separate system, SYSTEMS=prunus-new. It needs the
+# prunus-new branches of backend-common and eth-statedb, so it has its own sibling checkout,
+# arbora-new/ (see README); override with PRUNUS_NEW_DIR. It uses the same PRUNUS_VARIANT (child_hash
+# or original; it has no AHA variant) and the same micro-bench CLI, with its own db/ and logs/ names.
+prunusnew_dir=${PRUNUS_NEW_DIR:-../../arbora-new/prunus-new/prunusdb}
+prunusnew=$prunusnew_dir/target/release/examples/micro-bench
 
 cache_size=${1:-16384}   # MB
 batch_size=${2:-2000}
 val_size=${3:-200}       # bytes
 # Systems (space-separated), e.g. SYSTEMS="ficus geth chainkv" or SYSTEMS=prunus.
 # Default: FicusDB, Geth and ChainKV, plus PrunusDB when the arbora checkout next to
-# ficusdb-evaluation (i.e. $prunusdb_dir) exists.
+# ficusdb-evaluation (i.e. $prunusdb_dir) exists. prunus-new runs only when named in SYSTEMS.
 if [ -n "${SYSTEMS+x}" ]; then
     systems=$SYSTEMS
 elif [ -d "$prunusdb_dir" ]; then
@@ -48,6 +54,15 @@ if has_system prunus && [ ! -d "$prunusdb_dir" ]; then
     echo "Check out arbora next to ficusdb-evaluation (see README) or set PRUNUSDB_DIR." >&2
     exit 1
 fi
+if has_system prunus-new && [ ! -d "$prunusnew_dir" ]; then
+    echo "error: SYSTEMS includes prunus-new, but $prunusnew_dir does not exist." >&2
+    echo "Check out arbora-new next to ficusdb-evaluation (see README) or set PRUNUS_NEW_DIR." >&2
+    exit 1
+fi
+if has_system prunus-new && [ "${PRUNUS_VARIANT:-child_hash}" = aha ]; then
+    echo "error: prunus-new has no aha variant (use PRUNUS_VARIANT=child_hash or original)." >&2
+    exit 1
+fi
 echo "systems: $systems"
 
 ensure_keys() {
@@ -67,8 +82,9 @@ compile_ficus() {
     cd -
 }
 
+# compile_prunus <prunusdb dir>
 compile_prunus() {
-    cd $prunusdb_dir
+    cd $1
     cargo build --release $prunus_features --example micro-bench
     cd -
 }
@@ -98,21 +114,24 @@ populate_ficus() {
     cp -r $dbpath $backup_path
 }
 
+# populate_prunus <prunus|prunus-new> <micro-bench binary> <key_size> <cache_size> <batch_size> <val_size>
 populate_prunus() {
-    key_size=$1
-    cache_size=$2
-    batch_size=$3
-    val_size=$4
-    dbpath=$db_dir/micro-prunus-$key_size
+    name=$1
+    bin=$2
+    key_size=$3
+    cache_size=$4
+    batch_size=$5
+    val_size=$6
+    dbpath=$db_dir/micro-$name-$key_size
     wlpath=$data_dir/micro-$key_size.keys
     verpath=$dbpath/vers
 
     rm -rf $dbpath
     mkdir -p $dbpath
-    echo "prunus init $dbpath $wlpath $verpath $cache_size $batch_size $val_size"
-    $prunusdb init $dbpath $wlpath $verpath $cache_size $batch_size $val_size
+    echo "$name init $dbpath $wlpath $verpath $cache_size $batch_size $val_size"
+    $bin init $dbpath $wlpath $verpath $cache_size $batch_size $val_size
 
-    backup_path=$db_dir/backup-prunus-$key_size
+    backup_path=$db_dir/backup-$name-$key_size
     rm -rf $backup_path
     cp -r $dbpath $backup_path
 }
@@ -142,7 +161,8 @@ populate_all() {
         has_system ficus   && populate_ficus $key_size $cache_size $batch_size $val_size
         has_system geth    && populate_go_bench geth $key_size $cache_size $batch_size $val_size
         has_system chainkv && populate_go_bench chainkv $key_size $cache_size $batch_size $val_size
-        has_system prunus  && populate_prunus $key_size $cache_size $batch_size $val_size
+        has_system prunus  && populate_prunus prunus $prunusdb $key_size $cache_size $batch_size $val_size
+        has_system prunus-new && populate_prunus prunus-new $prunusnew $key_size $cache_size $batch_size $val_size
     done
 }
 
@@ -161,7 +181,8 @@ generate_trace() {
 
 has_system ficus && compile_ficus
 { has_system geth || has_system chainkv; } && compile_go_bench
-has_system prunus && compile_prunus
+has_system prunus && compile_prunus $prunusdb_dir
+has_system prunus-new && compile_prunus $prunusnew_dir
 ensure_keys
 populate_all
 generate_trace

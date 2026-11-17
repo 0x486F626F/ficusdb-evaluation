@@ -82,6 +82,7 @@ choose the systems the same way (they print the list they use):
 | Without PrunusDB | `SYSTEMS="ficus geth chainkv" ./micro-bench-init.sh` (and the same for `./micro-bench.sh`), or simply run without `../arbora` |
 | With PrunusDB | check out arbora as above, then run the scripts as usual |
 | Only some systems | e.g. `SYSTEMS=prunus` or `SYSTEMS="ficus prunus"` |
+| prunus-new | only when named, e.g. `SYSTEMS=prunus-new` or `SYSTEMS="prunus prunus-new"` (see below) |
 | Only some dataset sizes | `KEY_SIZES=20m` (default `"20m 100m"`) |
 
 If `SYSTEMS` names `prunus` but the arbora checkout is missing, the scripts stop with an error.
@@ -107,6 +108,70 @@ python3 micro-plot.py
 ```
 
 `micro-plot.py` adds the PrunusDB bars/lines whenever its logs are present and skips them otherwise.
+
+### Running prunus-new
+
+prunus-new is the newer Prunus storage engine. Its `micro-bench` driver has the same command line and
+log format as PrunusDB's, so the same scripts run it as a separate system, `prunus-new`. It is not part
+of the default system list; name it in `SYSTEMS`.
+
+prunus-new needs the `prunus-new` branches of backend-common and eth-statedb, while PrunusDB needs their
+`main` branches, so prunus-new gets its own checkout **next to** `ficusdb-evaluation`:
+
+```
+<parent>/
+├── ficusdb-evaluation/
+├── arbora/                    # PrunusDB, as above
+└── arbora-new/                # prunus-new (only needed for SYSTEMS=prunus-new)
+    ├── prunus-new/            #   github.com/arbora-systems/prunus-new      branch main
+    ├── backend-common/        #   github.com/arbora-systems/backend-common  branch prunus-new
+    └── eth-statedb/           #   github.com/arbora-systems/eth-statedb     branch prunus-new
+```
+
+```bash
+mkdir arbora-new && cd arbora-new
+git clone git@github.com:arbora-systems/prunus-new.git
+git clone -b prunus-new git@github.com:arbora-systems/backend-common.git
+git clone -b prunus-new git@github.com:arbora-systems/eth-statedb.git
+```
+
+Then run:
+
+```bash
+cd scripts
+SYSTEMS=prunus-new KEY_SIZES=20m ./micro-bench-init.sh   # build, populate db/micro-prunus-new-20m (+ backup)
+SYSTEMS=prunus-new KEY_SIZES=20m ./micro-bench.sh        # put, get, populate, vget at 1-16 GB cache
+python3 micro-plot.py                                    # adds prunus-new bars/lines when its logs exist
+```
+
+- The scripts build `../arbora-new/prunus-new/prunusdb` (relative to this repository; set
+  `PRUNUS_NEW_DIR` for another location) with `--features stats`. If `SYSTEMS` names `prunus-new`
+  but that directory is missing, the scripts stop with an error.
+- `PRUNUS_VARIANT` selects the trie the same way as for PrunusDB: `child_hash` (default) or `original`
+  (`--no-default-features`). prunus-new has no `aha` variant. Init and bench must use the same variant.
+- Its files are `db/micro-prunus-new-<size>`, `db/backup-prunus-new-<size>` and
+  `logs/{put,get,vget}/micro-*-prunus-new-*.log`, so it can run alongside PrunusDB
+  (`SYSTEMS="prunus prunus-new"`) without overwriting PrunusDB's databases or logs.
+- The cache-size argument is split as for PrunusDB: 7/8 of it to decoded trie nodes and 2/16 to
+  prunus-new's record-table (PtrLut) cache.
+- Optional environment variables: `PRUNUS_PTRLUT_MB` sets the record-table cache size in MB, and
+  `PRUNUS_CLEAN_BUDGET` sets the cleaner's pages per pass (default 64; with `child_hash`, 4096 kept
+  the 20M database much smaller in our runs).
+
+To run a single phase by hand (arguments: `<op> <db> <workload> <verpath> <cache_mb> [batch] [val] [versions]`):
+
+```bash
+cd ../arbora-new/prunus-new/prunusdb && cargo build --release --features stats --example micro-bench
+bin=target/release/examples/micro-bench
+mkdir -p <db>
+$bin init <db> ../../../ficusdb-evaluation/data/micro/micro-20m.keys <db>/vers 16384 2000 200
+$bin put  <db> ../../../ficusdb-evaluation/data/micro/micro-20m-50m.ops <db>/vers 1024 2000 200 2000
+$bin get  <db> ../../../ficusdb-evaluation/data/micro/micro-20m-50m.ops <db>/vers 1024 100000
+```
+
+`put` changes the database: restore the post-init copy before the next run, as the scripts do.
+Running `cargo test` after the build relinks `target/release/examples/micro-bench` without
+`--features stats`; rebuild before using the binary.
 
 ### 1) Download key-frequency data, populate databases, and generate workload traces
 
